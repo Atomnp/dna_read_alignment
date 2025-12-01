@@ -45,23 +45,6 @@ def sa_is(s):
 
 def sa_is_core(s, K):
     n = len(s)
-    t = [False] * n  # False: S-type, True: L-type
-
-    # Classify suffixes
-    # t[n-1] is S-type (sentinel is smallest)
-    # S-type: s[i] < s[i+1] or (s[i] == s[i+1] and t[i+1] is S)
-    # L-type: s[i] > s[i+1] or (s[i] == s[i+1] and t[i+1] is L)
-    # Here we use False for S, True for L to match typical implementations or vice versa.
-    # Let's stick to: S=False, L=True.
-    # Sentinel is S-type.
-
-    # Actually, standard is:
-    # S-type: s[i] < s[i+1] or (s[i] == s[i+1] and s[i+1] is S)
-    # L-type: s[i] > s[i+1] or (s[i] == s[i+1] and s[i+1] is L)
-    # Sentinel is always S-type.
-
-    # Let's use: S=0, L=1.
-    # t[i] = 1 if L-type, 0 if S-type
     t = [0] * n
     t[n - 1] = 0  # Sentinel is S-type
     for i in range(n - 2, -1, -1):
@@ -134,7 +117,7 @@ def induced_sort(s, sa, t, is_lms, lms_indices, K):
     # 1. Place LMS characters at end of S buckets
     bucket_ends = get_bucket_ends(buckets, alphabet)
     sa[:] = [-1] * n
-
+     
     for i in reversed(lms_indices):
         char = s[i]
         pos = bucket_ends[char] - 1
@@ -191,7 +174,7 @@ def suffix_array_search(s, sa, pattern):
         if compare_substring(s, pattern, sa[mid]) >= 0:
             right = mid
         else:
-            left = mid + 1
+            left = mid + 1 
     lb = left
 
     left, right = lb, len(sa)

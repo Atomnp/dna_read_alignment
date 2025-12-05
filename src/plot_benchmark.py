@@ -47,22 +47,28 @@ def plot_benchmarks(csv_path, output_dir):
 
     # Set plot style for academic look
     plt.style.use("seaborn-v0_8-whitegrid")
-    
+
     # Get unique algorithms
     algorithms = df["Algorithm"].unique()
 
     # --- Plot 1: Indexing Time vs Genome Length (Log-Log) ---
     plt.figure(figsize=(10, 6))
-    
+
     has_indexing_data = False
     for algo in algorithms:
         subset = df[df["Algorithm"] == algo]
         # Filter out 0 values for log plot (e.g., Brute Force)
         subset = subset[subset["Preproc Time (s)"] > 0]
-        
+
         if not subset.empty:
             has_indexing_data = True
-            plt.plot(subset["bp"], subset["Preproc Time (s)"], marker='o', label=algo, linewidth=2)
+            plt.plot(
+                subset["bp"],
+                subset["Preproc Time (s)"],
+                marker="o",
+                label=algo,
+                linewidth=2,
+            )
 
     if has_indexing_data:
         # Annotate genomes (place label at the top-most point for each genome)
@@ -73,14 +79,16 @@ def plot_benchmarks(csv_path, output_dir):
                 # Find the point with max Y value to place label above it
                 max_idx = genome_data["Preproc Time (s)"].idxmax()
                 max_row = genome_data.loc[max_idx]
-                plt.annotate(genome, 
-                             (max_row["bp"], max_row["Preproc Time (s)"]),
-                             textcoords="offset points", 
-                             xytext=(0, 5), 
-                             ha='center', 
-                             va='bottom',
-                             fontsize=9,
-                             fontweight='bold')
+                plt.annotate(
+                    genome,
+                    (max_row["bp"], max_row["Preproc Time (s)"]),
+                    textcoords="offset points",
+                    xytext=(0, 5),
+                    ha="center",
+                    va="bottom",
+                    fontsize=9,
+                    fontweight="bold",
+                )
         plt.xscale("log")
         plt.yscale("log")
         plt.xlabel("Genome Length (bp)", fontsize=12)
@@ -88,11 +96,11 @@ def plot_benchmarks(csv_path, output_dir):
         plt.title("Indexing Time Complexity vs Genome Length", fontsize=14)
         plt.legend(fontsize=10)
         plt.grid(True, which="both", ls="-", alpha=0.3)
-        
+
         # Format axes
         ax = plt.gca()
-        ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{x:g}'))
-        
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f"{x:g}"))
+
         plt.tight_layout()
         save_path = os.path.join(output_dir, "indexing_time_complexity.png")
         plt.savefig(save_path, dpi=300)
@@ -106,10 +114,16 @@ def plot_benchmarks(csv_path, output_dir):
     df["Search Time per 100k"] = (df["Search Time (s)"] / df["Num Reads"]) * 100000
 
     plt.figure(figsize=(10, 6))
-    
+
     for algo in algorithms:
         subset = df[df["Algorithm"] == algo]
-        plt.plot(subset["bp"], subset["Search Time per 100k"], marker='o', label=algo, linewidth=2)
+        plt.plot(
+            subset["bp"],
+            subset["Search Time per 100k"],
+            marker="o",
+            label=algo,
+            linewidth=2,
+        )
 
     # Annotate genomes
     for genome in df["Genome"].unique():
@@ -117,14 +131,16 @@ def plot_benchmarks(csv_path, output_dir):
         if not genome_data.empty:
             max_idx = genome_data["Search Time per 100k"].idxmax()
             max_row = genome_data.loc[max_idx]
-            plt.annotate(genome, 
-                         (max_row["bp"], max_row["Search Time per 100k"]),
-                         textcoords="offset points", 
-                         xytext=(0, 5), 
-                         ha='center', 
-                         va='bottom',
-                         fontsize=9,
-                         fontweight='bold')
+            plt.annotate(
+                genome,
+                (max_row["bp"], max_row["Search Time per 100k"]),
+                textcoords="offset points",
+                xytext=(0, 5),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                fontweight="bold",
+            )
 
     plt.xscale("log")
     plt.yscale("log")
@@ -133,10 +149,10 @@ def plot_benchmarks(csv_path, output_dir):
     plt.title("Search Time Complexity vs Genome Length", fontsize=14)
     plt.legend(fontsize=10)
     plt.grid(True, which="both", ls="-", alpha=0.3)
-    
+
     # Format axes
     ax = plt.gca()
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{x:g}'))
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f"{x:g}"))
 
     plt.tight_layout()
     save_path = os.path.join(output_dir, "search_time_complexity.png")
@@ -147,16 +163,22 @@ def plot_benchmarks(csv_path, output_dir):
     # --- Plot 3: Total Time (Bar Chart) ---
     # Helper to format bp for labels
     def format_bp(size):
-        if size >= 1e9: return f"{size/1e9:.1f}B"
-        elif size >= 1e6: return f"{size/1e6:.1f}M"
-        elif size >= 1e3: return f"{size/1e3:.1f}K"
-        else: return str(size)
+        if size >= 1e9:
+            return f"{size/1e9:.1f}B"
+        elif size >= 1e6:
+            return f"{size/1e6:.1f}M"
+        elif size >= 1e3:
+            return f"{size/1e3:.1f}K"
+        else:
+            return str(size)
 
     df["Size Label"] = df["bp"].apply(format_bp)
     df["X_Label"] = df["Genome"] + "\n(" + df["Size Label"] + ")"
-    
+
     # Pivot for bar chart
-    pivot_total = df.pivot(index="X_Label", columns="Algorithm", values="Total Time (s)")
+    pivot_total = df.pivot(
+        index="X_Label", columns="Algorithm", values="Total Time (s)"
+    )
     # Sort index by bp (using the original df to get order)
     # We need to get unique X_Labels in the correct order
     unique_labels = df.sort_values("bp")["X_Label"].unique()
@@ -169,9 +191,9 @@ def plot_benchmarks(csv_path, output_dir):
     plt.yscale("log")
     plt.xlabel("Genome", fontsize=12)
     plt.xticks(rotation=45, ha="right")
-    plt.grid(axis='y', which='major', alpha=0.3)
+    plt.grid(axis="y", which="major", alpha=0.3)
     plt.tight_layout()
-    
+
     save_path = os.path.join(output_dir, "total_time_bar.png")
     plt.savefig(save_path, dpi=300)
     print(f"[+] Saved {save_path}")
@@ -179,7 +201,9 @@ def plot_benchmarks(csv_path, output_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate academic plots from benchmark CSV.")
+    parser = argparse.ArgumentParser(
+        description="Generate academic plots from benchmark CSV."
+    )
     parser.add_argument("--csv", required=True, help="Path to benchmark results CSV")
     parser.add_argument("--output", default="./plots", help="Directory to save plots")
 

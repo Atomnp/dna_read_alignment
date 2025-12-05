@@ -313,6 +313,7 @@ def run_benchmark_multiple_genome(
                     "Peak Memory (MB)": res["peak_memory_mb"],
                     "Matches": res["matches"],
                     "Num Reads": len(reads_500),
+                    "bp": genome_length,
                 }
                 writer.writerow(row)
                 csvfile.flush()  # Ensure write

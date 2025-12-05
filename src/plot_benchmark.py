@@ -6,6 +6,7 @@ import sys
 try:
     import pandas as pd
     import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
 except ImportError:
     print("Error: This script requires 'pandas' and 'matplotlib'.")
     print("Please install them using: pip install pandas matplotlib")
@@ -36,111 +37,149 @@ def plot_benchmarks(csv_path, output_dir):
         lambda x: os.path.splitext(os.path.basename(x))[0]
     )
 
-    # Define genome order by length (approximate)
-    # Adjust this list based on your actual files
-    genome_order = [
-        "phix174",
-        "lambda_phage",
-        "sars_cov2",
-        "yeast_chrI",
-        "mycoplasma_genitalium",
-        "e_coli_k12",
-    ]
+    # Ensure 'bp' column exists
+    if "bp" not in df.columns:
+        print("Error: 'bp' column missing in CSV. Cannot plot by genome length.")
+        return
 
-    # Filter out genomes not in our known list if necessary, or just sort what we have
-    # Create a categorical type for ordering
-    df["Genome"] = pd.Categorical(df["Genome"], categories=genome_order, ordered=True)
-    df = df.sort_values("Genome")
+    # Sort by bp for consistent plotting
+    df = df.sort_values("bp")
 
-    # Calculate Search Time per Read (microseconds)
-    # This is important because Brute Force uses fewer reads than others
-    df["Search Time per Read (us)"] = (df["Search Time (s)"] / df["Num Reads"]) * 1e6
+    # Set plot style for academic look
+    plt.style.use("seaborn-v0_8-whitegrid")
+    
+    # Get unique algorithms
+    algorithms = df["Algorithm"].unique()
 
-    # Set plot style
-    plt.style.use("ggplot")
-
-    # --- Plot 1: Preprocessing Time (Line Chart) ---
+    # --- Plot 1: Indexing Time vs Genome Length (Log-Log) ---
     plt.figure(figsize=(10, 6))
-    pivot_preproc = df.pivot(
-        index="Genome", columns="Algorithm", values="Preproc Time (s)"
-    )
-    # Reindex to ensure correct order on X-axis
-    pivot_preproc = pivot_preproc.reindex(genome_order)
+    
+    has_indexing_data = False
+    for algo in algorithms:
+        subset = df[df["Algorithm"] == algo]
+        # Filter out 0 values for log plot (e.g., Brute Force)
+        subset = subset[subset["Preproc Time (s)"] > 0]
+        
+        if not subset.empty:
+            has_indexing_data = True
+            plt.plot(subset["bp"], subset["Preproc Time (s)"], marker='o', label=algo, linewidth=2)
 
-    for column in pivot_preproc.columns:
-        plt.plot(pivot_preproc.index, pivot_preproc[column], marker="o", label=column)
-
-    plt.title("Preprocessing Time by Genome Size")
-    plt.ylabel("Time (seconds)")
-    plt.xlabel("Genome (Increasing Size)")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "preprocessing_time_line.png"))
-    plt.close()
-    print(f"[+] Saved preprocessing_time_line.png")
-
-    # --- Plot 2: Search Time per Read (Line Chart) ---
-    plt.figure(figsize=(10, 6))
-    pivot_search = df.pivot(
-        index="Genome", columns="Algorithm", values="Search Time per Read (us)"
-    )
-    pivot_search = pivot_search.reindex(genome_order)
-
-    for column in pivot_search.columns:
-        plt.plot(pivot_search.index, pivot_search[column], marker="o", label=column)
-
-    plt.title("Search Time per Read (Normalized)")
-    plt.ylabel("Time (microseconds)")
-    plt.xlabel("Genome (Increasing Size)")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "search_time_line.png"))
-    plt.close()
-    print(f"[+] Saved search_time_line.png")
-
-    # --- Plot 3: Peak Memory Usage (Line Chart) ---
-    if df["Peak Memory (MB)"].sum() > 0:
-        plt.figure(figsize=(10, 6))
-        pivot_memory = df.pivot(
-            index="Genome", columns="Algorithm", values="Peak Memory (MB)"
-        )
-        pivot_memory = pivot_memory.reindex(genome_order)
-
-        for column in pivot_memory.columns:
-            plt.plot(pivot_memory.index, pivot_memory[column], marker="o", label=column)
-
-        plt.title("Peak Memory Usage")
-        plt.ylabel("Memory (MB)")
-        plt.xlabel("Genome (Increasing Size)")
-        plt.legend()
-        plt.grid(True)
+    if has_indexing_data:
+        # Annotate genomes (place label at the top-most point for each genome)
+        valid_indexing = df[df["Preproc Time (s)"] > 0]
+        for genome in valid_indexing["Genome"].unique():
+            genome_data = valid_indexing[valid_indexing["Genome"] == genome]
+            if not genome_data.empty:
+                # Find the point with max Y value to place label above it
+                max_idx = genome_data["Preproc Time (s)"].idxmax()
+                max_row = genome_data.loc[max_idx]
+                plt.annotate(genome, 
+                             (max_row["bp"], max_row["Preproc Time (s)"]),
+                             textcoords="offset points", 
+                             xytext=(0, 5), 
+                             ha='center', 
+                             va='bottom',
+                             fontsize=9,
+                             fontweight='bold')
+        plt.xscale("log")
+        plt.yscale("log")
+        plt.xlabel("Genome Length (bp)", fontsize=12)
+        plt.ylabel("Indexing Time (s)", fontsize=12)
+        plt.title("Indexing Time Complexity vs Genome Length", fontsize=14)
+        plt.legend(fontsize=10)
+        plt.grid(True, which="both", ls="-", alpha=0.3)
+        
+        # Format axes
+        ax = plt.gca()
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{x:g}'))
+        
         plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, "peak_memory_line.png"))
+        save_path = os.path.join(output_dir, "indexing_time_complexity.png")
+        plt.savefig(save_path, dpi=300)
+        print(f"[+] Saved {save_path}")
         plt.close()
-        print(f"[+] Saved peak_memory_line.png")
     else:
-        print("[-] Skipping memory plot (no memory data found).")
+        print("[-] No non-zero indexing time data found. Skipping plot.")
 
-    # --- Plot 4: Total Time (Log Scale) ---
-    # Useful if Brute Force is included and dominates the scale
-    plt.figure(figsize=(12, 6))
-    pivot_total = df.pivot(index="Genome", columns="Algorithm", values="Total Time (s)")
-    pivot_total.plot(kind="bar", ax=plt.gca())
-    plt.title("Total Execution Time (Log Scale)")
-    plt.ylabel("Time (seconds) - Log Scale")
+    # --- Plot 2: Search Time per 100k Queries vs Genome Length (Log-Log) ---
+    # Calculate normalized search time
+    df["Search Time per 100k"] = (df["Search Time (s)"] / df["Num Reads"]) * 100000
+
+    plt.figure(figsize=(10, 6))
+    
+    for algo in algorithms:
+        subset = df[df["Algorithm"] == algo]
+        plt.plot(subset["bp"], subset["Search Time per 100k"], marker='o', label=algo, linewidth=2)
+
+    # Annotate genomes
+    for genome in df["Genome"].unique():
+        genome_data = df[df["Genome"] == genome]
+        if not genome_data.empty:
+            max_idx = genome_data["Search Time per 100k"].idxmax()
+            max_row = genome_data.loc[max_idx]
+            plt.annotate(genome, 
+                         (max_row["bp"], max_row["Search Time per 100k"]),
+                         textcoords="offset points", 
+                         xytext=(0, 5), 
+                         ha='center', 
+                         va='bottom',
+                         fontsize=9,
+                         fontweight='bold')
+
+    plt.xscale("log")
     plt.yscale("log")
-    plt.xlabel("Genome")
-    plt.xticks(rotation=45, ha="right")
+    plt.xlabel("Genome Length (bp)", fontsize=12)
+    plt.ylabel("Search Time per 100k Queries (s)", fontsize=12)
+    plt.title("Search Time Complexity vs Genome Length", fontsize=14)
+    plt.legend(fontsize=10)
+    plt.grid(True, which="both", ls="-", alpha=0.3)
+    
+    # Format axes
+    ax = plt.gca()
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{x:g}'))
+
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "total_time_log.png"))
+    save_path = os.path.join(output_dir, "search_time_complexity.png")
+    plt.savefig(save_path, dpi=300)
+    print(f"[+] Saved {save_path}")
     plt.close()
-    print(f"[+] Saved total_time_log.png")
+
+    # --- Plot 3: Total Time (Bar Chart) ---
+    # Helper to format bp for labels
+    def format_bp(size):
+        if size >= 1e9: return f"{size/1e9:.1f}B"
+        elif size >= 1e6: return f"{size/1e6:.1f}M"
+        elif size >= 1e3: return f"{size/1e3:.1f}K"
+        else: return str(size)
+
+    df["Size Label"] = df["bp"].apply(format_bp)
+    df["X_Label"] = df["Genome"] + "\n(" + df["Size Label"] + ")"
+    
+    # Pivot for bar chart
+    pivot_total = df.pivot(index="X_Label", columns="Algorithm", values="Total Time (s)")
+    # Sort index by bp (using the original df to get order)
+    # We need to get unique X_Labels in the correct order
+    unique_labels = df.sort_values("bp")["X_Label"].unique()
+    pivot_total = pivot_total.reindex(unique_labels)
+
+    plt.figure(figsize=(12, 6))
+    pivot_total.plot(kind="bar", ax=plt.gca())
+    plt.title("Total Execution Time (Log Scale)", fontsize=14)
+    plt.ylabel("Time (seconds) - Log Scale", fontsize=12)
+    plt.yscale("log")
+    plt.xlabel("Genome", fontsize=12)
+    plt.xticks(rotation=45, ha="right")
+    plt.grid(axis='y', which='major', alpha=0.3)
+    plt.tight_layout()
+    
+    save_path = os.path.join(output_dir, "total_time_bar.png")
+    plt.savefig(save_path, dpi=300)
+    print(f"[+] Saved {save_path}")
+    plt.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate plots from benchmark CSV.")
+    parser = argparse.ArgumentParser(description="Generate academic plots from benchmark CSV.")
     parser.add_argument("--csv", required=True, help="Path to benchmark results CSV")
     parser.add_argument("--output", default="./plots", help="Directory to save plots")
 

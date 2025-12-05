@@ -45,33 +45,73 @@ def save_reads_fasta(reads, output_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate simulated reads from a reference genome."
+        description="Generate simulated reads from reference genomes in a directory."
     )
     parser.add_argument(
-        "--fasta", required=True, help="Path to input reference FASTA file"
+        "--input_dir",
+        default="./genome_data",
+        help="Directory containing reference FASTA files (default: ./genome_data)",
     )
     parser.add_argument(
-        "--num_reads", type=int, required=True, help="Number of reads to generate"
+        "--output_dir",
+        default="./simulated_reads",
+        help="Directory to save simulated reads (default: ./simulated_reads)",
     )
     parser.add_argument(
         "--read_len", type=int, default=100, help="Length of each read (default: 100)"
     )
-    parser.add_argument(
-        "--output", required=True, help="Path to output FASTA file for generated reads"
-    )
 
     args = parser.parse_args()
 
-    print(f"[+] Reading reference genome: {args.fasta}")
-    seq = read_fasta(args.fasta)
-    print(f"[+] Genome length: {len(seq)}")
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+        print(f"[+] Created output directory: {args.output_dir}")
 
-    print(f"[+] Generating {args.num_reads} reads of length {args.read_len}...")
-    reads = generate_reads(seq, args.num_reads, args.read_len)
+    if not os.path.exists(args.input_dir):
+        print(f"Error: Input directory '{args.input_dir}' does not exist.")
+        sys.exit(1)
 
-    print(f"[+] Saving reads to {args.output}...")
-    save_reads_fasta(reads, args.output)
-    print("[+] Done.")
+    # Find all FASTA files
+    files = [
+        f
+        for f in os.listdir(args.input_dir)
+        if f.lower().endswith((".fasta", ".fna", ".fa"))
+    ]
+
+    if not files:
+        print(f"No FASTA files found in {args.input_dir}")
+        sys.exit(0)
+
+    print(f"[+] Found {len(files)} FASTA files in {args.input_dir}")
+
+    for filename in files:
+        file_path = os.path.join(args.input_dir, filename)
+        print(f"\n[+] Processing: {filename}")
+
+        # read_fasta might sys.exit(1) on error, which stops the script.
+        # Assuming valid inputs for now as per utils.py design.
+        seq = read_fasta(file_path)
+        print(f"    Genome length: {len(seq)}")
+
+        # Configurations: 500 reads and 200k reads
+        configs = [(500, "500"), (200000, "200k")]
+
+        base_name = os.path.splitext(filename)[0]
+
+        for num_reads, suffix in configs:
+            print(f"    Generating {num_reads} reads...")
+            try:
+                reads = generate_reads(seq, num_reads, args.read_len)
+
+                output_filename = f"{base_name}_reads_{suffix}.fasta"
+                output_path = os.path.join(args.output_dir, output_filename)
+
+                save_reads_fasta(reads, output_path)
+                print(f"    Saved: {output_filename}")
+            except Exception as e:
+                print(f"    Error generating/saving reads: {e}")
+
+    print("\n[+] Batch processing complete.")
 
 
 if __name__ == "__main__":

@@ -12,3 +12,5 @@ env/
 
 # Python egg metadata
 *.egg-info/
+simulated_reads/
+plots/

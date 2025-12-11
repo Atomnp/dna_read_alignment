@@ -24,7 +24,7 @@ def load_reads(path):
                 line = line.strip()
                 if not line or line.startswith(">"):
                     continue
-                reads.append(line)
+                reads.append(line.strip().upper())
     except Exception as e:
         print(f"Error reading reads file: {e}")
         sys.exit(1)
@@ -55,6 +55,7 @@ def benchmark_brute_force(genome, reads, measure_memory=False):
         "search_time": end_time - start_time,
         "total_time": end_time - start_time,
         "peak_memory_mb": peak / (1024 * 1024),
+        "final_index_mb": 0,
         "matches": matches_count,
     }
 
@@ -105,6 +106,7 @@ def benchmark_naive_sa(genome, reads, measure_memory=False):
         "search_time": search_time,
         "total_time": preprocess_time + search_time,
         "peak_memory_mb": max(peak_preprocess, peak_search) / (1024 * 1024),
+        "final_index_mb": total_bytes / (1024 * 1024),
         "matches": matches_count,
     }
 
@@ -174,27 +176,44 @@ def benchmark_sa_is(genome, reads, sa_save_path=None, measure_memory=False):
         "search_time": search_time,
         "total_time": preprocess_time + search_time,
         "peak_memory_mb": max(peak_preprocess, peak_search) / (1024 * 1024),
+        "final_index_mb": total_bytes / (1024 * 1024),
         "matches": matches_count,
     }
 
 
-def benchmark_fm_index(genome, reads, measure_memory=False):
-    print("  Running FM-Index...")
+def benchmark_fm_index(
+    genome, reads, checkpoint_rate, sa_sample_rate, measure_memory=False
+):
+    name = f"FM-Index (Checkpoint Rate = {checkpoint_rate}, SA Sampling Rate = {sa_sample_rate})"
+    print(f"  Running {name}...")
 
-    # Preprocessing (Build FM-Index)
+    # Preprocessing
     if measure_memory:
         tracemalloc.start()
     start_time = time.perf_counter()
-    fm = fm_index.FMIndex(genome)
 
-    # Calculate memory of FM Index structure roughly
-    total_bytes = deep_getsizeof_list(fm.sa)
-    total_bytes += sys.getsizeof(fm.bwt)
-    total_bytes += sys.getsizeof(fm.C)
-    for char in fm.occ:
-        total_bytes += deep_getsizeof_list(fm.occ[char])
+    # Initialize with the specific Checkpoint Rate
+    fm = fm_index.FMIndex(
+        genome, checkpoint_rate=checkpoint_rate, sa_sample_rate=sa_sample_rate
+    )
 
-    print(f"FM-Index Memory: {total_bytes / (1024*1024):.2f} MB")
+    # 1. BWT (bytes)
+    total_bytes = sys.getsizeof(fm.bwt_arr)
+    # 2. C Table (Dict of ints)
+    total_bytes += sys.getsizeof(fm.c_table)
+    # 3. Checkpoints (Dict of array.array)
+    total_bytes += sys.getsizeof(fm.checkpoints)
+    for char_key in fm.checkpoints:
+        total_bytes += sys.getsizeof(fm.checkpoints[char_key])
+        total_bytes += fm.checkpoints[char_key].buffer_info()[1] * 4  # buffer content
+    # 4. SSA (Dict of ints)
+    total_bytes += sys.getsizeof(fm.ssa)
+    if len(fm.ssa) > 0:
+        # approx size of dict entry (key+val+overhead) ~ 64 bytes/entry depending on python version
+        total_bytes += len(fm.ssa) * 64
+
+    print(f"    Est. FM-Index Memory: {total_bytes / (1024*1024):.2f} MB")
+    # ----------------------------------------
 
     end_time = time.perf_counter()
     peak_preprocess = 0
@@ -219,30 +238,36 @@ def benchmark_fm_index(genome, reads, measure_memory=False):
     search_time = end_time - start_time
 
     return {
-        "name": "FM-Index",
+        "name": name,
         "preprocess_time": preprocess_time,
         "search_time": search_time,
         "total_time": preprocess_time + search_time,
         "peak_memory_mb": max(peak_preprocess, peak_search) / (1024 * 1024),
+        "final_index_mb": total_bytes / (1024 * 1024),
         "matches": matches_count,
     }
 
 
 def print_results(results):
-    print("\n" + "=" * 85)
+    print("\n" + "=" * 90)
     print(
-        f"{'Algorithm':<15} | {'Preproc (s)':<12} | {'Search (s)':<12} | {'Total (s)':<12} | {'Peak Mem (MB)':<14} | {'Matches':<8}"
+        f"{'Algorithm':<20} | {'Preproc (s)':<12} | {'Search (s)':<12} | {'Total (s)':<12} | {'Peak Mem (MB)':<14} | {'Matches':<8}"
     )
-    print("-" * 85)
+    print("-" * 90)
     for res in results:
         print(
-            f"{res['name']:<15} | {res['preprocess_time']:<12.4f} | {res['search_time']:<12.4f} | {res['total_time']:<12.4f} | {res['peak_memory_mb']:<14.2f} | {res['matches']:<8}"
+            f"{res['name']:<20} | {res['preprocess_time']:<12.4f} | {res['search_time']:<12.4f} | {res['total_time']:<12.4f} | {res['peak_memory_mb']:<14.2f} | {res['matches']:<8}"
         )
-    print("=" * 85 + "\n")
+    print("=" * 90 + "\n")
 
 
 def run_benchmark_multiple_genome(
-    genome_dir, reads_dir, output_csv, measure_memory=False, skip_brute=False
+    genome_dir,
+    reads_dir,
+    output_csv,
+    measure_memory=False,
+    skip_brute=False,
+    fm_only=False,
 ):
     if not os.path.exists(genome_dir):
         print(f"Error: Genome directory '{genome_dir}' not found.")
@@ -269,6 +294,7 @@ def run_benchmark_multiple_genome(
         "Search Time (s)",
         "Total Time (s)",
         "Peak Memory (MB)",
+        "Final Index Memory (MB)",
         "Matches",
         "Num Reads",
         "bp",
@@ -298,7 +324,7 @@ def run_benchmark_multiple_genome(
             reads_200k_path = os.path.join(reads_dir, reads_200k_file)
 
             # 1. Brute Force (500 reads)
-            if os.path.exists(reads_500_path) and not skip_brute:
+            if os.path.exists(reads_500_path) and not skip_brute and not fm_only:
                 print(f"  Loading 500 reads from {reads_500_file}")
                 reads_500 = load_reads(reads_500_path)
                 res = benchmark_brute_force(
@@ -311,6 +337,7 @@ def run_benchmark_multiple_genome(
                     "Search Time (s)": res["search_time"],
                     "Total Time (s)": res["total_time"],
                     "Peak Memory (MB)": res["peak_memory_mb"],
+                    "Final Index Memory (MB)": res.get("final_index_mb", 0),
                     "Matches": res["matches"],
                     "Num Reads": len(reads_500),
                     "bp": genome_length,
@@ -325,55 +352,67 @@ def run_benchmark_multiple_genome(
                 print(f"  Loading 200k reads from {reads_200k_file}")
                 reads_200k = load_reads(reads_200k_path)
 
-                # SA-IS
-                res = benchmark_sa_is(genome, reads_200k, measure_memory=measure_memory)
-                row = {
-                    "Genome": genome_file,
-                    "Algorithm": res["name"],
-                    "Preproc Time (s)": res["preprocess_time"],
-                    "Search Time (s)": res["search_time"],
-                    "Total Time (s)": res["total_time"],
-                    "Peak Memory (MB)": res["peak_memory_mb"],
-                    "Matches": res["matches"],
-                    "Num Reads": len(reads_200k),
-                    "bp": genome_length,
-                }
-                writer.writerow(row)
+                if not fm_only:
+                    # SA-IS
+                    res = benchmark_sa_is(
+                        genome, reads_200k, measure_memory=measure_memory
+                    )
+                    row = {
+                        "Genome": genome_file,
+                        "Algorithm": res["name"],
+                        "Preproc Time (s)": res["preprocess_time"],
+                        "Search Time (s)": res["search_time"],
+                        "Total Time (s)": res["total_time"],
+                        "Peak Memory (MB)": res["peak_memory_mb"],
+                        "Final Index Memory (MB)": res.get("final_index_mb", 0),
+                        "Matches": res["matches"],
+                        "Num Reads": len(reads_200k),
+                        "bp": genome_length,
+                    }
+                    writer.writerow(row)
 
-                # Naive SA
-                res = benchmark_naive_sa(
-                    genome, reads_200k, measure_memory=measure_memory
-                )
-                row = {
-                    "Genome": genome_file,
-                    "Algorithm": res["name"],
-                    "Preproc Time (s)": res["preprocess_time"],
-                    "Search Time (s)": res["search_time"],
-                    "Total Time (s)": res["total_time"],
-                    "Peak Memory (MB)": res["peak_memory_mb"],
-                    "Matches": res["matches"],
-                    "Num Reads": len(reads_200k),
-                    "bp": genome_length,
-                }
-                writer.writerow(row)
+                    # Naive SA
+                    res = benchmark_naive_sa(
+                        genome, reads_200k, measure_memory=measure_memory
+                    )
+                    row = {
+                        "Genome": genome_file,
+                        "Algorithm": res["name"],
+                        "Preproc Time (s)": res["preprocess_time"],
+                        "Search Time (s)": res["search_time"],
+                        "Total Time (s)": res["total_time"],
+                        "Peak Memory (MB)": res["peak_memory_mb"],
+                        "Final Index Memory (MB)": res.get("final_index_mb", 0),
+                        "Matches": res["matches"],
+                        "Num Reads": len(reads_200k),
+                        "bp": genome_length,
+                    }
+                    writer.writerow(row)
 
                 # FM-Index
-                # res = benchmark_fm_index(
-                #     genome, reads_200k, measure_memory=measure_memory
-                # )
-                # row = {
-                #     "Genome": genome_file,
-                #     "Algorithm": res["name"],
-                #     "Preproc Time (s)": res["preprocess_time"],
-                #     "Search Time (s)": res["search_time"],
-                #     "Total Time (s)": res["total_time"],
-                #     "Peak Memory (MB)": res["peak_memory_mb"],
-                #     "Matches": res["matches"],
-                #     "Num Reads": len(reads_200k),
-                #     "bp": genome_length,
-                # }
-                # writer.writerow(row)
-                csvfile.flush()
+                for rate in [64]:
+                    for sample in [16]:
+                        res = benchmark_fm_index(
+                            genome,
+                            reads_200k,
+                            checkpoint_rate=rate,
+                            sa_sample_rate=sample,
+                            measure_memory=measure_memory,
+                        )
+                        row = {
+                            "Genome": genome_file,
+                            "Algorithm": res["name"],
+                            "Preproc Time (s)": res["preprocess_time"],
+                            "Search Time (s)": res["search_time"],
+                            "Total Time (s)": res["total_time"],
+                            "Peak Memory (MB)": res["peak_memory_mb"],
+                            "Final Index Memory (MB)": res.get("final_index_mb", 0),
+                            "Matches": res["matches"],
+                            "Num Reads": len(reads_200k),
+                            "bp": genome_length,
+                        }
+                        writer.writerow(row)
+                        csvfile.flush()
             else:
                 print(
                     f"  Warning: {reads_200k_file} not found. Skipping SA/FM benchmarks."
@@ -396,6 +435,11 @@ def main():
         action="store_true",
         help="Enable memory benchmarking using tracemalloc (can be slow)",
     )
+    parser.add_argument(
+        "--fm-only",
+        action="store_true",
+        help="Skip Brute Force and Suffix Arrays, running only the FM-Index",
+    )
 
     # Batch mode arguments
     parser.add_argument(
@@ -416,6 +460,7 @@ def main():
             args.output_csv,
             args.measure_memory,
             args.skip_brute,
+            args.fm_only,
         )
         return
 
@@ -437,7 +482,7 @@ def main():
         results = []
 
         # 1. Brute Force
-        if not args.skip_brute:
+        if not args.skip_brute and not args.fm_only:
             results.append(
                 benchmark_brute_force(genome, reads, measure_memory=args.measure_memory)
             )
@@ -445,24 +490,34 @@ def main():
             print("  Skipping Brute Force...")
 
         # 2. SA-IS
-        results.append(
-            benchmark_sa_is(
-                genome,
-                reads,
-                sa_save_path="sa_is_suffix_array.txt",
-                measure_memory=args.measure_memory,
+        if not args.fm_only:
+            results.append(
+                benchmark_sa_is(
+                    genome,
+                    reads,
+                    sa_save_path="sa_is_suffix_array.txt",
+                    measure_memory=args.measure_memory,
+                )
             )
-        )
 
         # 3. Naive Suffix Array
-        results.append(
-            benchmark_naive_sa(genome, reads, measure_memory=args.measure_memory)
-        )
+        if not args.fm_only:
+            results.append(
+                benchmark_naive_sa(genome, reads, measure_memory=args.measure_memory)
+            )
 
         # 4. FM-Index
-        results.append(
-            benchmark_fm_index(genome, reads, measure_memory=args.measure_memory)
-        )
+        for rate in [64]:
+            for sample in [16]:
+                results.append(
+                    benchmark_fm_index(
+                        genome,
+                        reads,
+                        checkpoint_rate=rate,
+                        sa_sample_rate=sample,
+                        measure_memory=args.measure_memory,
+                    )
+                )
 
         print_results(results)
     else:

@@ -7,9 +7,10 @@ try:
     import pandas as pd
     import matplotlib.pyplot as plt
     import matplotlib.ticker as ticker
+    import numpy as np
 except ImportError:
-    print("Error: This script requires 'pandas' and 'matplotlib'.")
-    print("Please install them using: pip install pandas matplotlib")
+    print("Error: This script requires 'pandas', 'matplotlib', and 'numpy'.")
+    print("Please install them using: pip install pandas matplotlib numpy")
     sys.exit(1)
 
 
@@ -51,10 +52,15 @@ def plot_benchmarks(csv_path, output_dir):
     # Get unique algorithms
     algorithms = df["Algorithm"].unique()
 
+    # Get unique genomes
+    unique_genomes = df["Genome"].unique()
+
     # --- Plot 1: Indexing Time vs Genome Length (Log-Log) ---
     plt.figure(figsize=(10, 6))
 
     has_indexing_data = False
+    max_time_val = 0
+
     for algo in algorithms:
         subset = df[df["Algorithm"] == algo]
         # Filter out 0 values for log plot (e.g., Brute Force)
@@ -69,6 +75,30 @@ def plot_benchmarks(csv_path, output_dir):
                 label=algo,
                 linewidth=2,
             )
+            max_time_val = max(max_time_val, subset["Preproc Time (s)"].max())
+
+    min_bp = df["bp"].min()
+    max_bp = df["bp"].max()
+    x_theory = np.geomspace(min_bp, max_bp, 100)
+    y_linear = x_theory
+    plt.plot(
+        x_theory,
+        y_linear,
+        color="gray",
+        linestyle="-.",
+        label="y = x",
+        alpha=0.7,
+    )
+
+    y_nsq_log_n = x_theory**2 * np.log2(x_theory)
+    plt.plot(
+        x_theory,
+        y_nsq_log_n,
+        color="black",
+        linestyle="--",
+        label="y = n² log(n)",
+        alpha=0.7,
+    )
 
     if has_indexing_data:
         # Annotate genomes (place label at the top-most point for each genome)
@@ -116,14 +146,46 @@ def plot_benchmarks(csv_path, output_dir):
     plt.figure(figsize=(10, 6))
 
     for algo in algorithms:
+        algo_name = algo
+        if algo == "Brute Force":
+            # Skip Brute Force for search time plot due to poor scaling
+            algo_name = "Brute Force (Linear scan)"
+        elif algo == "Naive SA":
+            algo_name = "Naive SA (Binary Search)"
+        elif algo == "SA-IS":
+            algo_name = "SA-IS (Binary Search)"
         subset = df[df["Algorithm"] == algo]
         plt.plot(
             subset["bp"],
             subset["Search Time per 100k"],
             marker="o",
-            label=algo,
+            label=algo_name,
             linewidth=2,
         )
+
+    # Add theoretical complexity line: y =log2(x)
+    min_bp = df["bp"].min()
+    max_bp = df["bp"].max()
+    x_theory = np.geomspace(min_bp, max_bp, 100)
+    y_theory = np.log2(x_theory)
+    plt.plot(
+        x_theory,
+        y_theory,
+        color="black",
+        linestyle="--",
+        label="y = log(x)",
+        alpha=0.7,
+    )
+
+    y_linear = x_theory
+    plt.plot(
+        x_theory,
+        y_linear,
+        color="gray",
+        linestyle="-.",
+        label="y = x",
+        alpha=0.7,
+    )
 
     # Annotate genomes
     for genome in df["Genome"].unique():
@@ -197,6 +259,138 @@ def plot_benchmarks(csv_path, output_dir):
     save_path = os.path.join(output_dir, "total_time_bar.png")
     plt.savefig(save_path, dpi=300)
     print(f"[+] Saved {save_path}")
+    plt.close()
+
+    # Plot 4: Final Index Memory vs Genome Size
+    fig, ax = plt.subplots(figsize=(10, 6))
+    points_plotted = 0
+
+    for algo in algorithms:
+        if "Brute" in algo:
+            continue
+
+        subset = df[df["Algorithm"] == algo]
+        subset = subset[subset["Final Index Memory (MB)"] > 0]
+
+        if not subset.empty:
+            ax.plot(
+                subset["bp"],
+                subset["Final Index Memory (MB)"],
+                marker="s",
+                label=algo,
+                linewidth=2,
+            )
+            points_plotted += len(subset)
+
+    if points_plotted > 0:
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel("Genome Length (bp)")
+        ax.set_ylabel("Final Index Memory (MB)")
+        ax.set_title("Memory Scaling: Index Size vs Genome Length")
+        ax.legend(fontsize=8)
+        ax.grid(True, which="both", ls="-", alpha=0.3)
+
+        # Force tick formatting to avoid scientific notation confusion
+        ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f"{x:g}"))
+
+        plt.tight_layout()
+        save_path = os.path.join(output_dir, "memory_scaling.png")
+        plt.savefig(save_path, dpi=300)
+        print(f"[+] Saved {save_path}")
+    else:
+        print("[-] Warning: No valid memory data found. Plot skipped.")
+    plt.close()
+
+    # Plot 5: Space-Time Trade-off
+    num_genomes = len(unique_genomes)
+    cols = 2
+    rows = math.ceil(num_genomes / cols)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(12, 5 * rows))
+
+    if num_genomes == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    for i, genome in enumerate(unique_genomes):
+        ax = axes[i]
+        subset = df[df["Genome"] == genome]
+
+        for _, row in subset.iterrows():
+            algo_name = row["Algorithm"]
+
+            # --- CHANGE: Strict Filter for FM-Index Only ---
+            if "FM-Index" not in algo_name:
+                continue
+            # -----------------------------------------------
+
+            x_val = row["Final Index Memory (MB)"]
+            if x_val == 0:
+                continue
+
+            y_val = row["Search Time per 100k"]
+
+            # Since we only plot FM-Index, we can keep the blue style or vary it
+            color = "tab:blue"
+            marker = "o"
+
+            ax.scatter(
+                x_val, y_val, s=100, alpha=0.8, c=color, marker=marker, edgecolors="k"
+            )
+
+            # Annotate short names
+            short = (
+                algo_name.split("(")[-1]
+                .replace("Checkpoint Rate =", "CP")
+                .replace("SA Sampling Rate =", "SA")
+                .replace(")", "")
+            )
+            ax.annotate(
+                short,
+                (x_val, y_val),
+                xytext=(3, 3),
+                textcoords="offset points",
+                fontsize=7,
+            )
+
+        ax.set_title(f"Genome: {genome}", fontsize=11, fontweight="bold")
+        ax.set_xlabel("Memory (MB)")
+        ax.set_ylabel("Time (s) / 100k Reads")
+        ax.grid(True, linestyle="--", alpha=0.5)
+
+        # Use log scale for Y axis (Time)
+        ax.set_yscale("log")
+
+    # Hide unused subplots
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    # Simplified Legend for just FM-Index
+    from matplotlib.lines import Line2D
+
+    legend_elements = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="tab:blue",
+            label="FM-Index Configuration",
+            markersize=10,
+        ),
+    ]
+    fig.legend(
+        handles=legend_elements, loc="upper center", ncol=1, bbox_to_anchor=(0.5, 1.02)
+    )
+
+    plt.tight_layout()
+    plt.savefig(
+        os.path.join(output_dir, "space_time_tradeoff_subplots.png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
     plt.close()
 
 
